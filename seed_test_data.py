@@ -27,6 +27,7 @@ DUELISTS = [
     "Moon Knight", "Black Widow", "Iron Man", "Squirrel Girl", "Spider-Man",
     "Scarlet Witch", "Winter Soldier", "Star-Lord", "Namor", "Psylocke",
     "Wolverine", "Iron Fist", "Emma Frost", "Phoenix", "The Punisher",
+    "Black Cat",
 ]
 
 STRATEGISTS = [
@@ -104,15 +105,12 @@ def seed(conn, n: int = 1000):
     for i in range(n):
         # ── My comp + role ────────────────────────────────────────────────────
         my_comp, my_wr = pick_comp()
-        role = "vanguard" if random.random() < 0.80 else "duelist"
-        me = my_hero(my_comp, role)
+        me = "Black Cat"
 
         # ── Allies: fill remaining 5 slots from my comp ───────────────────────
         v, d, s = my_comp
-        # subtract my slot
-        if me in VANGUARDS:   v -= 1
-        elif me in DUELISTS:  d -= 1
-        else:                 s -= 1
+        # Black Cat is a Duelist — subtract one DPS slot
+        d -= 1
         ally_comp = (max(v, 0), max(d, 0), max(s, 0))
         allies = build_team(ally_comp, exclude=[me])
         # if comp slots don't total 5, top up with random duelists
@@ -129,8 +127,11 @@ def seed(conn, n: int = 1000):
             if pick not in enemies:
                 enemies.append(pick)
 
-        # ── Result: driven purely by my team's comp win rate ─────────────────
-        result = "win" if random.random() < my_wr else "loss"
+        # ── Result: comp win rate + player skill modifier ────────────────────
+        # Real WR is 56%. Average comp baseline across all archetypes is ~50%.
+        # Skill edge lifts it +6% to reach 56%.
+        adjusted_wr = min(my_wr + 0.07, 0.99)
+        result = "win" if random.random() < adjusted_wr else "loss"
 
         # ── Other fields ──────────────────────────────────────────────────────
         map_name  = random.choice(MAPS)
