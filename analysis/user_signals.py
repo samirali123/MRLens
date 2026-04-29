@@ -8,8 +8,8 @@ COMP_ARCHETYPES = {
 }
 
 
-def get_hero_winrates(conn, username: str) -> dict:
-    rows = get_user_hero_stats(conn, username)
+def get_hero_winrates(conn, player_uid: int) -> dict:
+    rows = get_user_hero_stats(conn, player_uid)
     return {
         r["hero_played"]: {
             "games": int(r["games"]),
@@ -20,8 +20,8 @@ def get_hero_winrates(conn, username: str) -> dict:
     }
 
 
-def get_hero_winrates_on_map(conn, username: str, map_name: str) -> dict:
-    rows = get_user_hero_stats_by_map(conn, username, map_name)
+def get_hero_winrates_on_map(conn, player_uid: int, map_name: str) -> dict:
+    rows = get_user_hero_stats_by_map(conn, player_uid, map_name)
     return {
         r["hero_played"]: {
             "games": int(r["games"]),
@@ -44,7 +44,7 @@ def classify_comp(enemy_heroes: list[str]) -> str:
     return max(scores, key=scores.get)
 
 
-def get_winrate_vs_archetype(conn, username: str, archetype: str) -> dict:
+def get_winrate_vs_archetype(conn, player_uid: int, archetype: str) -> dict:
     archetype_heroes = COMP_ARCHETYPES.get(archetype, set())
     sql = """
         SELECT
@@ -53,13 +53,13 @@ def get_winrate_vs_archetype(conn, username: str, archetype: str) -> dict:
             SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) AS wins,
             ROUND(SUM(CASE WHEN result = 'win' THEN 1.0 ELSE 0 END) / COUNT(*), 4) AS win_rate
         FROM user_matches
-        WHERE player_username = %s
+        WHERE player_uid = %s
           AND enemy_comp && %s
         GROUP BY hero_played
         ORDER BY games DESC
     """
     with conn.cursor() as cur:
-        cur.execute(sql, (username, list(archetype_heroes)))
+        cur.execute(sql, (player_uid, list(archetype_heroes)))
         cols = [d[0] for d in cur.description]
         rows = cur.fetchall()
     return {

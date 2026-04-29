@@ -80,7 +80,7 @@ def get_map_name(conn, map_id: int) -> Optional[str]:
     return row[0] if row else None
 
 
-def get_user_hero_stats(conn, username: str) -> list[dict]:
+def get_user_hero_stats(conn, player_uid: int) -> list[dict]:
     sql = """
         SELECT
             hero_played,
@@ -88,17 +88,17 @@ def get_user_hero_stats(conn, username: str) -> list[dict]:
             SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) AS wins,
             ROUND(SUM(CASE WHEN result = 'win' THEN 1.0 ELSE 0 END) / COUNT(*), 4) AS win_rate
         FROM user_matches
-        WHERE player_username = %s
+        WHERE player_uid = %s
         GROUP BY hero_played
         ORDER BY games DESC
     """
     with conn.cursor() as cur:
-        cur.execute(sql, (username,))
+        cur.execute(sql, (player_uid,))
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-def get_user_hero_stats_by_map(conn, username: str, map_name: str) -> list[dict]:
+def get_user_hero_stats_by_map(conn, player_uid: int, map_name: str) -> list[dict]:
     sql = """
         SELECT
             hero_played,
@@ -106,12 +106,12 @@ def get_user_hero_stats_by_map(conn, username: str, map_name: str) -> list[dict]
             SUM(CASE WHEN result = 'win' THEN 1 ELSE 0 END) AS wins,
             ROUND(SUM(CASE WHEN result = 'win' THEN 1.0 ELSE 0 END) / COUNT(*), 4) AS win_rate
         FROM user_matches
-        WHERE player_username = %s AND map_name = %s
+        WHERE player_uid = %s AND map_name = %s
         GROUP BY hero_played
         ORDER BY games DESC
     """
     with conn.cursor() as cur:
-        cur.execute(sql, (username, map_name))
+        cur.execute(sql, (player_uid, map_name))
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
@@ -126,7 +126,7 @@ def get_enemy_weaknesses(conn, enemy_usernames: list[str]) -> list[dict]:
             losses,
             win_rate
         FROM enemy_profiles
-        WHERE player_username = ANY(%s)
+        WHERE player_username = ANY(%s::varchar[])
           AND games_played >= 5
         ORDER BY player_username, win_rate ASC
     """
