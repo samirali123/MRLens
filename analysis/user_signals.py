@@ -1,19 +1,43 @@
 from db.queries import get_user_hero_stats, get_user_hero_stats_by_map
 
 # Canonical hero name → aliases (for OCR fuzzy matching and user input normalisation)
+# Canonical name is always what gets stored in the DB.
 HERO_ALIASES = {
-    "Scarlet Witch": ["Wanda", "Scarlet Witch"],
-    "Winter Soldier": ["Bucky", "Winter Soldier"],
-    "Phoenix":        ["Jean", "Jean Grey", "Phoenix"],
-    "TankPool":       ["Deadpool Tank", "TankPool"],
-    "DpsPool":        ["Deadpool DPS", "DpsPool"],
-    "SupportPool":    ["Deadpool Support", "SupportPool"],
+    "Hulk":              ["Hulk", "Banner"],
+    "Doctor Strange":    ["Doctor Strange", "Strange"],
+    "Magneto":           ["Magneto", "Mag"],
+    "Captain America":   ["Captain America", "Steve", "Rogers", "Steve Rogers"],
+    "Emma Frost":        ["Emma Frost", "Emma"],
+    "Human Torch":       ["Human Torch", "Johnny"],
+    "Black Widow":       ["Black Widow", "Widow"],
+    "Iron Man":          ["Iron Man", "Stark"],
+    "Squirrel Girl":     ["Squirrel Girl", "SG"],
+    "Star-Lord":         ["Star-Lord", "SL", "Starlord"],
+    "Mister Fantastic":  ["Mister Fantastic", "Fanta", "Mr Fantastic", "Mr. Fantastic"],
+    "Daredevil":         ["Daredevil", "DD"],
+    "Elsa Bloodstone":   ["Elsa Bloodstone", "Elsa"],
+    "Rocket Raccoon":    ["Rocket Raccoon", "Rocket"],
+    "Cloak & Dagger":    ["Cloak & Dagger", "Cloak", "CnD", "C&D"],
+    "Luna Snow":         ["Luna Snow", "Luna"],
+    "Jeff the Land Shark": ["Jeff the Land Shark", "Jeff"],
+    "Invisible Woman":   ["Invisible Woman", "Invis", "Sue Storm", "SueStorm"],
+    "Scarlet Witch":     ["Scarlet Witch", "Wanda"],
+    "Winter Soldier":    ["Winter Soldier", "Bucky"],
+    "Phoenix":           ["Phoenix", "Jean", "Jean Grey"],
+    # Deadpool variants — "DP" is ambiguous; resolved by role context at input time
+    "TankPool":          ["TankPool", "Deadpool Tank"],
+    "DpsPool":           ["DpsPool", "Deadpool DPS"],
+    "SupportPool":       ["SupportPool", "Deadpool Support"],
 }
+
 ALIAS_TO_CANONICAL = {
     alias.lower(): canonical
     for canonical, aliases in HERO_ALIASES.items()
     for alias in aliases
 }
+
+# "DP" is intentionally not in ALIAS_TO_CANONICAL — ambiguous without role context.
+# Handle at the input layer by asking which variant the user means.
 
 VANGUARDS = {
     "Hulk", "Doctor Strange", "Groot", "Magneto", "Peni Parker",
