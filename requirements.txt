@@ -1,0 +1,10 @@
+httpx
+psycopg2-binary
+python-dotenv
+anthropic
+rich
+easyocr
+mss
+numpy
+Pillow
+opencv-python
