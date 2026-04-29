@@ -1,25 +1,15 @@
-import anthropic
-from config.settings import ANTHROPIC_API_KEY
+import ollama
 from db.queries import log_recommendation
 
-_client = None
-
-
-def _get_client() -> anthropic.Anthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    return _client
+OLLAMA_MODEL = "llama3.1:8b"
 
 
 def get_recommendation(prompt: str, conn=None, log_meta: dict = None) -> str:
-    client = _get_client()
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=512,
+    response = ollama.chat(
+        model=OLLAMA_MODEL,
         messages=[{"role": "user", "content": prompt}],
     )
-    response_text = message.content[0].text
+    response_text = response.message.content
 
     if conn and log_meta:
         recommended_heroes = _parse_hero_names(response_text)

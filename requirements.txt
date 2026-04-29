@@ -1,7 +1,7 @@
 httpx
 psycopg2-binary
 python-dotenv
-anthropic
+ollama
 rich
 easyocr
 mss
