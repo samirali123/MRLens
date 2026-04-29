@@ -5,16 +5,20 @@ def upsert_user_match(conn, match: dict) -> None:
     sql = """
         INSERT INTO user_matches (
             match_uid, player_username, player_uid, hero_played,
-            map_id, map_name, result, enemy_comp, enemy_uids, enemy_usernames,
+            map_id, map_name, side, result,
+            ally_heroes, enemy_comp, enemy_uids, enemy_usernames,
             kills, deaths, assists, season, game_mode_id, played_at
         ) VALUES (
             %(match_uid)s, %(player_username)s, %(player_uid)s, %(hero_played)s,
-            %(map_id)s, %(map_name)s, %(result)s, %(enemy_comp)s, %(enemy_uids)s,
-            %(enemy_usernames)s, %(kills)s, %(deaths)s, %(assists)s,
+            %(map_id)s, %(map_name)s, %(side)s, %(result)s,
+            %(ally_heroes)s, %(enemy_comp)s, %(enemy_uids)s, %(enemy_usernames)s,
+            %(kills)s, %(deaths)s, %(assists)s,
             %(season)s, %(game_mode_id)s, %(played_at)s
         )
         ON CONFLICT (match_uid) DO UPDATE SET
             map_name        = EXCLUDED.map_name,
+            side            = EXCLUDED.side,
+            ally_heroes     = EXCLUDED.ally_heroes,
             enemy_comp      = EXCLUDED.enemy_comp,
             enemy_uids      = EXCLUDED.enemy_uids,
             enemy_usernames = EXCLUDED.enemy_usernames

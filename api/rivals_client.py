@@ -78,23 +78,51 @@ async def get_map_list() -> dict:
     return data
 
 
-def get_enemies_from_match(match_detail: dict, user_uid: int) -> list[dict]:
-    players = match_detail.get("match_players", match_detail.get("players", []))
-    user_camp = None
+def _get_user_camp(players: list[dict], user_uid: int) -> int | None:
     for p in players:
         if p.get("player_uid") == user_uid or p.get("uid") == user_uid:
-            user_camp = p.get("camp")
-            break
+            return p.get("camp")
+    return None
 
+
+def _primary_hero(player: dict) -> str:
+    """Return the hero the player spent the most time on."""
+    heroes = player.get("player_heroes", [])
+    if not heroes:
+        return player.get("hero_name", "")
+    best = max(heroes, key=lambda h: h.get("play_time", h.get("time_played", 0)), default=heroes[0])
+    return best.get("hero_name", best.get("name", ""))
+
+
+def get_allies_from_match(match_detail: dict, user_uid: int) -> list[dict]:
+    """Return teammates (same camp, excluding the user)."""
+    players = match_detail.get("match_players", match_detail.get("players", []))
+    user_camp = _get_user_camp(players, user_uid)
     if user_camp is None:
         return []
+    return [
+        {
+            "uid": p.get("player_uid", p.get("uid")),
+            "nick_name": p.get("nick_name", p.get("username", "")),
+            "hero": _primary_hero(p),
+        }
+        for p in players
+        if p.get("camp") == user_camp
+        and p.get("player_uid", p.get("uid")) != user_uid
+    ]
 
-    enemies = []
-    for p in players:
-        if p.get("camp") != user_camp:
-            enemies.append({
-                "uid": p.get("player_uid", p.get("uid")),
-                "nick_name": p.get("nick_name", p.get("username", "")),
-                "heroes_played": p.get("player_heroes", []),
-            })
-    return enemies
+
+def get_enemies_from_match(match_detail: dict, user_uid: int) -> list[dict]:
+    players = match_detail.get("match_players", match_detail.get("players", []))
+    user_camp = _get_user_camp(players, user_uid)
+    if user_camp is None:
+        return []
+    return [
+        {
+            "uid": p.get("player_uid", p.get("uid")),
+            "nick_name": p.get("nick_name", p.get("username", "")),
+            "heroes_played": p.get("player_heroes", []),
+        }
+        for p in players
+        if p.get("camp") != user_camp
+    ]

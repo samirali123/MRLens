@@ -4,13 +4,16 @@ import time
 
 from config.settings import DATABASE_URL, validate_env
 from db.connection import init_pool, get_conn, release_conn
-from db.queries import upsert_user_match, upsert_enemy_profile, upsert_map_cache, get_map_name
+from db.queries import upsert_user_match, upsert_map_cache, get_map_name, get_user_hero_stats
 from api.rivals_client import (
-    get_match_history, get_match_detail, get_match_details_batch,
-    get_player_stats, get_map_list, get_enemies_from_match,
+    get_match_history, get_match_details_batch,
+    get_allies_from_match, get_enemies_from_match, get_map_list,
 )
-from analysis.user_signals import get_hero_winrates, get_hero_winrates_on_map, classify_comp, get_winrate_vs_archetype
-from analysis.enemy_signals import get_enemy_weaknesses, aggregate_enemy_vulnerabilities
+from analysis.user_signals import get_hero_winrates, get_hero_winrates_on_map, classify_comp
+from analysis.ally_signals import (
+    get_all_hero_pair_winrates, get_top_synergies_for_hero,
+    get_best_heroes_on_map, get_synergy_opportunities,
+)
 from analysis.meta_signals import get_rank_winrates, get_map_winrates, compute_personal_vs_community_delta
 from llm.prompt_builder import build_context
 from llm.recommender import get_recommendation
@@ -20,61 +23,67 @@ from cli.output import (
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Marvel Rivals Counter-Pick Engine")
-    p.add_argument("--user", required=True, help="Your Marvel Rivals username")
-    p.add_argument("--ingest", action="store_true", help="Pull and store match history + enemy profiles")
-    p.add_argument("--enemies", help="Comma-separated enemy usernames (manual mode)")
+    p = argparse.ArgumentParser(description="MRLens — Marvel Rivals Pick Advisor")
+    p.add_argument("--uid", required=True, type=int, help="Your Marvel Rivals player UID")
+    p.add_argument("--username", default="Player", help="Your display name (for output only)")
+    p.add_argument("--ingest", action="store_true", help="Pull and store match history")
     p.add_argument("--map", dest="map_name", help="Current map name")
+    p.add_argument("--side", choices=["attack", "defense"], help="Attack or defense")
+    p.add_argument("--allies", help="Comma-separated ally hero names")
     p.add_argument("--rank", default="Gold", help="Your rank tier (default: Gold)")
-    p.add_argument("--cv", action="store_true", help="Auto-detect enemy names via screen capture OCR")
+    p.add_argument("--cv", action="store_true", help="Auto-detect map/side/allies via screen capture")
     p.add_argument("--stats", action="store_true", help="Print your hero win rate stats")
+    p.add_argument("--synergies", metavar="HERO", help="Show your personal synergy data for a hero")
+    p.add_argument("--pairs", action="store_true", help="Show all your hero pair win rates")
     return p.parse_args()
 
 
-async def run_ingest(username: str, conn):
-    print_info(f"Fetching match history for {username}...")
+async def run_ingest(uid: int, username: str, conn):
+    print_info(f"Fetching match history for UID {uid}...")
     t0 = time.time()
 
-    matches = await get_match_history(username, limit=50)
-    print_info(f"Found {len(matches)} matches. Fetching match details...")
+    matches = await get_match_history(str(uid), limit=50)
+    if not matches:
+        print_error("No matches returned. Profile may be private or UID incorrect.")
+        return
 
+    print_info(f"Found {len(matches)} matches. Caching map data...")
     map_data = await get_map_list()
     for map_id, map_name in map_data.items():
         upsert_map_cache(conn, int(map_id), map_name)
 
     match_uids = [m.get("match_uid") or m.get("id") for m in matches if m.get("match_uid") or m.get("id")]
+    print_info(f"Fetching {len(match_uids)} match details (allies, maps, sides)...")
     details = await get_match_details_batch(match_uids)
 
-    user_uid = None
+    stored = 0
     for match, detail in zip(matches, details):
-        if isinstance(detail, Exception):
+        if isinstance(detail, Exception) or not detail:
             continue
 
         map_id = match.get("map_id") or match.get("match_map_id")
         resolved_map = get_map_name(conn, map_id) if map_id else None
         result = "win" if match.get("is_win") else "loss"
 
-        # Detect user_uid from match detail on first successful match
-        if user_uid is None:
-            players = detail.get("match_players", detail.get("players", []))
-            for p in players:
-                if (p.get("nick_name") or "").lower() == username.lower():
-                    user_uid = p.get("player_uid") or p.get("uid")
-                    break
+        allies = get_allies_from_match(detail, uid)
+        ally_hero_names = [a["hero"] for a in allies if a.get("hero")]
 
-        enemies = get_enemies_from_match(detail, user_uid) if user_uid else []
+        # Side detection — try game_mode_id or map type heuristics; default unknown
+        side = _detect_side(match, detail)
 
         upsert_user_match(conn, {
             "match_uid": match.get("match_uid") or match.get("id"),
             "player_username": username,
-            "player_uid": user_uid,
+            "player_uid": uid,
             "hero_played": match.get("hero_played") or match.get("hero", "Unknown"),
             "map_id": map_id,
             "map_name": resolved_map,
+            "side": side,
             "result": result,
-            "enemy_comp": [e["nick_name"] for e in enemies],
-            "enemy_uids": [e["uid"] for e in enemies if e.get("uid")],
-            "enemy_usernames": [e["nick_name"] for e in enemies],
+            "ally_heroes": ally_hero_names,
+            "enemy_comp": [],
+            "enemy_uids": [],
+            "enemy_usernames": [],
             "kills": match.get("kills"),
             "deaths": match.get("deaths"),
             "assists": match.get("assists"),
@@ -82,92 +91,122 @@ async def run_ingest(username: str, conn):
             "game_mode_id": match.get("game_mode"),
             "played_at": match.get("match_time_stamp") or match.get("played_at"),
         })
+        stored += 1
 
     elapsed = time.time() - t0
-    print_info(f"Ingestion complete in {elapsed:.1f}s. {len(matches)} matches stored.")
+    print_info(f"Ingestion complete in {elapsed:.1f}s — {stored} matches stored.")
+
+
+def _detect_side(match: dict, detail: dict) -> str:
+    """Best-effort side detection from available match data."""
+    side_raw = (
+        match.get("side")
+        or detail.get("side")
+        or match.get("team_side")
+        or detail.get("team_side")
+    )
+    if isinstance(side_raw, str):
+        s = side_raw.lower()
+        if s in ("attack", "offense"):
+            return "attack"
+        if s in ("defense", "defend"):
+            return "defense"
+    return "unknown"
+
+
+def _print_synergies(conn, uid: int, hero: str):
+    results = get_top_synergies_for_hero(conn, uid, hero)
+    if not results:
+        console.print(f"[yellow]Not enough data yet for {hero} synergies (need 3+ games per ally).[/]")
+        return
+    console.print(f"\n[bold cyan]Your {hero} synergies (allies ranked by your win rate):[/]")
+    console.print(f"{'Ally':<22} {'Games':>6} {'Win Rate':>10} {'vs Baseline':>13}")
+    console.print("─" * 55)
+    for s in results:
+        delta_str = f"{s['delta']:+.1%}" if s["delta"] is not None else "N/A"
+        color = "green" if (s["delta"] or 0) > 0 else "red"
+        console.print(
+            f"{s['ally']:<22} {s['games']:>6} {s['win_rate']:>9.1%} [{color}]{delta_str:>13}[/]"
+        )
+    if results:
+        baseline = results[0]["baseline_wr"]
+        console.print(f"\n[dim]Baseline {hero} win rate: {baseline:.1%}[/]")
+
+
+def _print_all_pairs(conn, uid: int):
+    pairs = get_all_hero_pair_winrates(conn, uid)
+    if not pairs:
+        console.print("[yellow]Not enough pair data yet (need 3+ games per combination).[/]")
+        return
+    console.print("\n[bold cyan]Your hero pair win rates:[/]")
+    console.print(f"{'You':<20} {'+ Ally':<22} {'Games':>6} {'Win Rate':>10}")
+    console.print("─" * 62)
+    for p in pairs:
+        wr = float(p["win_rate"])
+        color = "green" if wr >= 0.55 else "red" if wr < 0.45 else "yellow"
+        console.print(
+            f"{p['hero_played']:<20} {p['ally']:<22} {int(p['games']):>6} [{color}]{wr:>9.1%}[/]"
+        )
 
 
 async def run_recommend(args, conn):
     timings = {}
 
-    # Enemy detection
     t0 = time.time()
     if args.cv:
-        from cv.ocr import extract_all_enemy_names
-        enemy_usernames = extract_all_enemy_names()
-        if not enemy_usernames:
-            print_error("OCR detected no enemy names. Fall back to --enemies flag.")
-            return
+        from cv.ocr import extract_all_ally_names, extract_map_name, extract_side
+        ally_heroes = extract_all_ally_names()
+        map_name = extract_map_name() or "Unknown Map"
+        side = extract_side() or "unknown"
         detected_via = "ocr"
-    elif args.enemies:
-        enemy_usernames = [e.strip() for e in args.enemies.split(",")]
-        detected_via = "manual"
     else:
-        print_error("Provide --enemies or --cv to identify the enemy team.")
-        return
-    timings["Enemy detection"] = time.time() - t0
+        ally_heroes = [h.strip() for h in args.allies.split(",")] if args.allies else []
+        map_name = args.map_name or "Unknown Map"
+        side = args.side or "unknown"
+        detected_via = "manual"
+    timings["Input detection"] = time.time() - t0
 
-    map_name = args.map_name or "Unknown Map"
-    print_header(args.user, map_name, enemy_usernames)
+    print_header(args.username, map_name, ally_heroes)
 
-    # Fetch enemy profiles (PREMIUM)
     t0 = time.time()
-    print_info("Fetching enemy profiles...")
-    for uname in enemy_usernames:
-        try:
-            profile = await get_player_stats(uname)
-            if not profile or profile.get("isPrivate"):
-                continue
-            hero_stats = profile.get("hero_stats", profile.get("heroes", []))
-            for hs in hero_stats:
-                hero_name = hs.get("hero_name") or hs.get("name", "")
-                games = hs.get("games_played") or hs.get("matches", 0)
-                wins = hs.get("wins", 0)
-                losses = games - wins
-                wr = round(wins / games, 4) if games > 0 else 0.0
-                upsert_enemy_profile(conn, uname, uname, {
-                    "hero_name": hero_name,
-                    "games_played": games,
-                    "wins": wins,
-                    "losses": losses,
-                    "win_rate": wr,
-                }, season="current")
-        except Exception:
-            pass
-    timings[f"API lookups ({len(enemy_usernames)} enemies)"] = time.time() - t0
-
-    # Analysis
-    t0 = time.time()
-    personal_wr = get_hero_winrates(conn, args.user)
-    map_wr_personal = get_hero_winrates_on_map(conn, args.user, map_name)
-    comp_archetype = classify_comp(enemy_usernames)
-    archetype_winrates = get_winrate_vs_archetype(conn, args.user, comp_archetype)
+    personal_wr = get_hero_winrates(conn, args.uid)
+    map_wr = get_best_heroes_on_map(conn, args.uid, map_name, side)
+    overall_wr = get_hero_winrates(conn, args.uid)
     community_rank_wr = get_rank_winrates(conn, args.rank)
     community_map_wr = get_map_winrates(conn, map_name, args.rank)
     personal_vs_community = compute_personal_vs_community_delta(personal_wr, community_rank_wr)
-    enemy_signals = get_enemy_weaknesses(conn, enemy_usernames)
-    enemy_vulnerabilities = aggregate_enemy_vulnerabilities(enemy_signals)
+
+    # Synergy: for each of my top heroes, which active allies boost my win rate?
+    active_synergies = []
+    top_heroes = sorted(personal_wr.items(), key=lambda x: x[1]["win_rate"], reverse=True)[:8]
+    for hero, _ in top_heroes:
+        syns = get_synergy_opportunities(conn, args.uid, hero, ally_heroes)
+        for s in syns:
+            active_synergies.append({"hero": hero, **s})
+
+    comp_archetype = classify_comp(ally_heroes)
     timings["Analysis computation"] = time.time() - t0
 
-    # LLM
     t0 = time.time()
     prompt = build_context(
-        username=args.user,
+        username=args.username,
         player_rank=args.rank,
         map_name=map_name,
-        enemy_heroes=enemy_usernames,
+        side=side,
+        ally_heroes=ally_heroes,
         comp_archetype=comp_archetype,
         personal_vs_community=personal_vs_community,
-        archetype_winrates=archetype_winrates,
-        enemy_signals=enemy_signals,
-        enemy_vulnerabilities=enemy_vulnerabilities,
-        map_winrates=community_map_wr,
+        map_winrates={r["hero_played"]: float(r["win_rate"]) for r in map_wr},
+        community_map_winrates=community_map_wr,
+        active_synergies=active_synergies,
     )
     log_meta = {
-        "player_username": args.user,
+        "player_username": args.username,
         "map_name": map_name,
+        "side": side,
+        "ally_heroes": ally_heroes,
         "enemy_uids": [],
-        "enemy_usernames": enemy_usernames,
+        "enemy_usernames": [],
         "detected_via": detected_via,
     }
     recommendation = get_recommendation(prompt, conn=conn, log_meta=log_meta)
@@ -184,18 +223,25 @@ async def main():
     except EnvironmentError as e:
         console.print(f"[bold red]{e}[/]")
         return
+
     init_pool()
     conn = get_conn()
 
     try:
         if args.ingest:
-            await run_ingest(args.user, conn)
+            await run_ingest(args.uid, args.username, conn)
 
         if args.stats:
-            stats = get_hero_winrates(conn, args.user)
-            print_hero_stats(stats, title=f"{args.user}'s Hero Win Rates")
+            stats = get_hero_winrates(conn, args.uid)
+            print_hero_stats(stats, title=f"{args.username}'s Hero Win Rates")
 
-        if args.enemies or args.cv:
+        if args.synergies:
+            _print_synergies(conn, args.uid, args.synergies)
+
+        if args.pairs:
+            _print_all_pairs(conn, args.uid)
+
+        if args.allies or args.cv:
             await run_recommend(args, conn)
     finally:
         release_conn(conn)
