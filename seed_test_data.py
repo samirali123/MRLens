@@ -18,22 +18,25 @@ SEASON   = "2.0"
 
 VANGUARDS = [
     "Hulk", "Doctor Strange", "Groot", "Magneto", "Peni Parker",
-    "The Thing", "Venom", "Captain America", "Thor", "Invisible Woman",
-    "Mister Fantastic", "Ultron",
+    "The Thing", "Venom", "Captain America", "Thor", "Emma Frost",
+    "Angela", "Rogue", "TankPool",
 ]
 
 DUELISTS = [
     "Storm", "Human Torch", "Hawkeye", "Hela", "Black Panther", "Magik",
     "Moon Knight", "Black Widow", "Iron Man", "Squirrel Girl", "Spider-Man",
     "Scarlet Witch", "Winter Soldier", "Star-Lord", "Namor", "Psylocke",
-    "Wolverine", "Iron Fist", "Emma Frost", "Phoenix", "The Punisher",
-    "Black Cat",
+    "Wolverine", "Iron Fist", "Phoenix", "The Punisher", "Black Cat",
+    "Mister Fantastic", "Blade", "Daredevil", "DpsPool", "Elsa Bloodstone",
 ]
 
 STRATEGISTS = [
     "Loki", "Mantis", "Rocket Raccoon", "Cloak & Dagger",
     "Luna Snow", "Adam Warlock", "Jeff the Land Shark",
+    "Invisible Woman", "Ultron", "Gambit", "White Fox", "SupportPool",
 ]
+
+DEADPOOL_VARIANTS = {"TankPool", "DpsPool", "SupportPool"}
 
 MAPS = [
     "Tokyo 2099", "Yggdrasil", "Symbiotic Surface", "Midtown",
@@ -69,12 +72,21 @@ def pick_comp() -> tuple[tuple, float]:
 
 
 def build_team(comp: tuple[int, int, int], exclude: list[str]) -> list[str]:
-    """Fill a 6-player team given (v, d, s) counts, avoiding excluded heroes."""
+    """Fill a team given (v, d, s) counts. Only one Deadpool variant per team."""
     v_count, d_count, s_count = comp
+    deadpool_used = any(h in DEADPOOL_VARIANTS for h in exclude)
 
     def sample(pool, n, excl):
-        available = [h for h in pool if h not in excl]
-        return random.sample(available, min(n, len(available)))
+        nonlocal deadpool_used
+        available = [
+            h for h in pool
+            if h not in excl
+            and (h not in DEADPOOL_VARIANTS or not deadpool_used)
+        ]
+        picks = random.sample(available, min(n, len(available)))
+        if any(p in DEADPOOL_VARIANTS for p in picks):
+            deadpool_used = True
+        return picks
 
     heroes = []
     heroes += sample(VANGUARDS,   v_count, exclude + heroes)
