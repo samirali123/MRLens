@@ -38,8 +38,10 @@ def classify_comp(enemy_heroes: list[str]) -> str:
         for archetype, hero_set in COMP_ARCHETYPES.items():
             if hero in hero_set:
                 scores[archetype] += 1
-    top = max(scores, key=scores.get)
-    return top if scores[top] > 0 else "mixed"
+    top_score = max(scores.values())
+    if top_score < 2:
+        return "mixed"
+    return max(scores, key=scores.get)
 
 
 def get_winrate_vs_archetype(conn, username: str, archetype: str) -> dict:
