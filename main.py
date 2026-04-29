@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import time
 
-from config.settings import DATABASE_URL
+from config.settings import DATABASE_URL, validate_env
 from db.connection import init_pool, get_conn, release_conn
 from db.queries import upsert_user_match, upsert_enemy_profile, upsert_map_cache, get_map_name
 from api.rivals_client import (
@@ -178,11 +178,12 @@ async def run_recommend(args, conn):
 
 
 async def main():
-    if not DATABASE_URL:
-        console.print("[bold red]DATABASE_URL not set. Check your .env file.[/]")
-        return
-
     args = parse_args()
+    try:
+        validate_env()
+    except EnvironmentError as e:
+        console.print(f"[bold red]{e}[/]")
+        return
     init_pool()
     conn = get_conn()
 

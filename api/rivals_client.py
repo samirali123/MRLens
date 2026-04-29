@@ -1,12 +1,12 @@
 import asyncio
 import httpx
-from config.settings import RIVALS_API_BASE_URL, RIVALS_API_BASE_URL_V2, API_HEADERS, RATE_LIMIT_RETRIES, RATE_LIMIT_BACKOFF_BASE
+from config.settings import RIVALS_API_BASE_URL, RIVALS_API_BASE_URL_V2, get_api_headers, RATE_LIMIT_RETRIES, RATE_LIMIT_BACKOFF_BASE
 
 
 async def _get(client: httpx.AsyncClient, url: str, params: dict = None) -> dict:
     for attempt in range(RATE_LIMIT_RETRIES):
         try:
-            resp = await client.get(url, params=params, headers=API_HEADERS, timeout=10.0)
+            resp = await client.get(url, params=params, headers=get_api_headers(), timeout=10.0)
             if resp.status_code == 429:
                 wait = RATE_LIMIT_BACKOFF_BASE ** attempt
                 await asyncio.sleep(wait)
